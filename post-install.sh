@@ -258,17 +258,86 @@ sudo virsh net-autostart default 2>/dev/null || true
 sudo virsh net-start default 2>/dev/null || true
 log "libvirt default NAT network configured"
 
-# ── Steam 32-bit Dependencies ─────────────────────────────────────────────────
-section "Steam 32-bit libraries"
+# ── Steam + Gaming Foundation ─────────────────────────────────────────────────
+section "Steam and gaming foundation"
 sudo pacman -S --needed --noconfirm \
     lib32-mesa \
     lib32-vulkan-intel \
+    lib32-vulkan-icd-loader \
     lib32-alsa-plugins \
     lib32-libpulse \
     lib32-pipewire \
     steam-native-runtime \
+    xorg-xwayland
+
+# ── Gaming Performance & Compatibility ────────────────────────────────────────
+# gamemode:     lets games request CPU/GPU performance boost on demand
+# gamescope:    Valve's micro-compositor — fixes scaling, tearing, FSR upscaling
+# mangohud:     in-game overlay for FPS, CPU/GPU temps, frame times
+# goverlay:     GUI editor for MangoHud config
+# vkbasalt:     post-processing effects (sharpening, SMAA) for Vulkan games
+# wine/winetricks: run non-Steam Windows games natively
+# lutris:       multi-platform game manager (GOG, itch.io, emulators, etc.)
+# irqbalance:   spreads hardware interrupts across CPU cores for smoother gaming
+section "Gaming performance tools"
+sudo pacman -S --needed --noconfirm \
     gamemode \
-    lib32-gamemode
+    lib32-gamemode \
+    gamescope \
+    mangohud \
+    lib32-mangohud \
+    goverlay \
+    vkbasalt \
+    lib32-vkbasalt \
+    vulkan-mesa-layers \
+    lib32-vulkan-mesa-layers \
+    wine \
+    wine-mono \
+    wine-gecko \
+    winetricks \
+    lutris \
+    irqbalance \
+    xdg-desktop-portal-gtk
+
+sudo systemctl enable --now irqbalance
+sudo usermod -aG gamemode "${REAL_USER}"
+log "Added ${REAL_USER} to gamemode group"
+
+# ── Intel Arc OpenCL (needed by some games and tools) ─────────────────────────
+section "Intel Arc OpenCL compute runtime"
+sudo pacman -S --needed --noconfirm \
+    intel-compute-runtime \
+    ocl-icd \
+    lib32-ocl-icd \
+    clinfo
+
+# ── System Performance Tweaks ─────────────────────────────────────────────────
+section "System performance tuning"
+
+# zram: compressed in-RAM swap — better latency than disk swap during gaming
+sudo pacman -S --needed --noconfirm zram-generator
+cat <<'ZRAM' | sudo tee /etc/systemd/zram-generator.conf
+[zram0]
+zram-size = ram / 2
+compression-algorithm = zstd
+ZRAM
+sudo systemctl daemon-reload
+sudo systemctl start systemd-zram-setup@zram0.service 2>/dev/null || true
+log "zram swap configured (RAM/2, zstd)"
+
+# Kernel tweaks: lower swappiness (less aggressive swapping during gaming),
+# reduce watchdog overhead, enable split lock mitigation
+cat <<'SYSCTL' | sudo tee /etc/sysctl.d/99-gaming.conf
+# Reduce swap aggressiveness — prefer keeping game data in RAM
+vm.swappiness = 10
+vm.vfs_cache_pressure = 50
+# Reduce kernel NMI watchdog overhead
+kernel.nmi_watchdog = 0
+# Allow more memory map areas (needed by some games like Star Citizen, modded games)
+vm.max_map_count = 2147483642
+SYSCTL
+sudo sysctl --system
+log "Kernel parameters tuned for gaming"
 
 # ── Node.js (required for Claude Code) ───────────────────────────────────────
 section "Node.js"
@@ -284,6 +353,7 @@ log "Claude Code installed — run 'claude' after reboot to authenticate"
 section "AUR applications (this may take a while — building from source)"
 
 AUR_PACKAGES=(
+    # Productivity & communication
     android-studio
     bitwarden
     teams-for-linux
@@ -291,6 +361,11 @@ AUR_PACKAGES=(
     protonvpn
     spotify
     viber
+    # Gaming
+    protonup-qt               # GUI manager for GE-Proton and other Proton forks
+    heroic-games-launcher-bin # Epic Games Store + GOG launcher
+    ananicy-cpp               # Auto process priority daemon for smoother gaming
+    protontricks              # Winetricks wrapper for Steam Proton prefixes
 )
 
 for pkg in "${AUR_PACKAGES[@]}"; do
@@ -328,7 +403,7 @@ cat <<'EOF'
 ╠══════════════════════════════════════════════════════╣
 ║  Drivers      Intel Arc (mesa + vulkan-intel)        ║
 ║               intel-media-driver (VAAPI / iHD)       ║
-║               sof-firmware (Core Ultra audio)         ║
+║               sof-firmware (Core Ultra audio)        ║
 ║               intel-ucode, linux-firmware            ║
 ║               bluez (Bluetooth)                      ║
 ║  Audio        PipeWire + WirePlumber                 ║
@@ -337,6 +412,11 @@ cat <<'EOF'
 ║  AUR Apps     Android Studio, Bitwarden              ║
 ║               Microsoft Teams, Outlook               ║
 ║               ProtonVPN, Spotify, Viber              ║
+║  Gaming       gamemode, gamescope, MangoHud          ║
+║               Wine, Lutris, Heroic, vkbasalt         ║
+║               ProtonUp-Qt, protontricks              ║
+║               Intel Arc OpenCL, irqbalance           ║
+║               zram swap, kernel gaming tweaks        ║
 ║  Dev          Claude Code, Node.js, Java 21/17       ║
 ║  VM           virt-manager + QEMU/KVM + libvirt      ║
 ║  KDE          xdg-portal-kde, kdeconnect, breeze-gtk ║
@@ -346,11 +426,19 @@ EOF
 
 echo ""
 warn "Required after reboot:"
-warn "  → 'claude'                   — authenticate Claude Code"
-warn "  → 'vainfo'                   — verify Intel Arc VAAPI acceleration"
-warn "  → 'fprintd-enroll'           — register fingerprint"
-warn "  → Log out/in for libvirt group changes to take effect"
-warn "  → KDE Settings → Energy Saving — configure power profiles"
+warn "  → 'claude'                    — authenticate Claude Code"
+warn "  → 'vainfo'                    — verify Intel Arc VAAPI acceleration"
+warn "  → 'clinfo'                    — verify Intel Arc OpenCL runtime"
+warn "  → 'fprintd-enroll'            — register fingerprint"
+warn "  → Log out/in for libvirt + gamemode group changes to take effect"
+warn "  → KDE Settings → Energy Saving — set Performance profile for gaming"
+warn ""
+warn "Gaming tips:"
+warn "  → Open ProtonUp-Qt and install GE-Proton (latest)"
+warn "  → In Steam: Settings → Compatibility → Enable for all titles"
+warn "  → Launch games with: gamemoderun %command% (Steam launch options)"
+warn "  → Add MANGOHUD=1 to launch options to enable FPS overlay"
+warn "  → Use gamescope for better Wayland fullscreen: see README"
 echo ""
 
 read -rp "Reboot now? [y/N]: " confirm
