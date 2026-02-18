@@ -39,7 +39,8 @@ bash post-install.sh
 | `intel-ucode` | CPU microcode updates |
 | `sof-firmware` | **Required** for Intel Core Ultra audio (Meteor Lake SOF) |
 | `linux-firmware` | General firmware blobs |
-| `mesa` + `lib32-mesa` | Open-source GPU drivers |
+| `xe` (kernel module) | Modern DRM kernel driver for Xe-architecture GPUs — explicitly loaded via early KMS; `i915` is blacklisted |
+| `mesa` + `lib32-mesa` | Open-source GPU userspace drivers |
 | `vulkan-intel` + `lib32-vulkan-intel` | Vulkan for Intel Arc |
 | `intel-media-driver` | VAAPI hardware video decode (iHD backend) |
 | `bluez` | Bluetooth |

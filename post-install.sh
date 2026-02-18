@@ -82,14 +82,15 @@ sudo pacman -S --needed --noconfirm \
     sof-firmware \
     alsa-firmware
 
-# Regenerate initramfs so microcode is picked up on next boot
-sudo mkinitcpio -P
-log "initramfs regenerated"
-
-# ── Intel Arc GPU Drivers ─────────────────────────────────────────────────────
-# intel-media-driver (iHD) is the modern VAAPI driver for Arc/Iris Xe
-# Do NOT install xf86-video-intel — kernel modesetting is better on Wayland
-section "Intel Arc iGPU drivers"
+# ── Intel Arc GPU — xe kernel driver ─────────────────────────────────────────
+# xe is the modern kernel DRM driver purpose-built for Xe-architecture GPUs
+# (Intel Arc, Meteor Lake, Battlemage+). i915 is legacy and in maintenance mode
+# for new hardware. On kernel 6.8+ xe loads by default for Meteor Lake, but we
+# explicitly blacklist i915 to guarantee xe is always used.
+#
+# Note: mesa/vulkan-intel/intel-media-driver are userspace — they work with
+# whichever kernel driver (xe or i915) is loaded underneath.
+section "Intel Arc iGPU drivers (xe)"
 sudo pacman -S --needed --noconfirm \
     mesa \
     lib32-mesa \
@@ -101,7 +102,25 @@ sudo pacman -S --needed --noconfirm \
     libva-utils \
     intel-gpu-tools
 
-# iHD is the correct VAAPI backend for Intel Arc / Iris Xe
+# Force xe by blacklisting i915 — prevents i915 from racing xe at boot
+echo "blacklist i915" | sudo tee /etc/modprobe.d/blacklist-i915.conf
+log "i915 blacklisted — xe will be used as the kernel GPU driver"
+
+# Add xe to early KMS modules so the display is handed off cleanly at boot
+if grep -q "^MODULES=" /etc/mkinitcpio.conf; then
+    if ! grep -q "\bxe\b" /etc/mkinitcpio.conf; then
+        sudo sed -i 's/^MODULES=(\(.*\))/MODULES=(\1 xe)/' /etc/mkinitcpio.conf
+        # Clean up any leading space if MODULES was empty
+        sudo sed -i 's/^MODULES=( /MODULES=(/' /etc/mkinitcpio.conf
+        log "xe added to MODULES in mkinitcpio.conf (early KMS)"
+    else
+        log "xe already present in mkinitcpio.conf MODULES"
+    fi
+fi
+sudo mkinitcpio -P
+log "initramfs regenerated with xe early KMS"
+
+# iHD is the correct VAAPI backend — unchanged regardless of kernel driver
 if ! grep -q "LIBVA_DRIVER_NAME" /etc/environment 2>/dev/null; then
     echo "LIBVA_DRIVER_NAME=iHD" | sudo tee -a /etc/environment
     log "Set LIBVA_DRIVER_NAME=iHD for hardware video acceleration"
